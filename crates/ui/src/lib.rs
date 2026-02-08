@@ -57,6 +57,10 @@ enum AiRunEvent {
         message: String,
         duration_ms: u64,
     },
+    CodexSessionUpdated {
+        tab_id: u64,
+        session_id: String,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -79,6 +83,7 @@ struct TabRuntime {
     export_message: String,
     ai_status_line: String,
     running_ai_jobs: usize,
+    codex_last_session_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -162,6 +167,7 @@ impl TabRuntime {
                 export_message: String::new(),
                 ai_status_line: "idle".to_owned(),
                 running_ai_jobs: 0,
+                codex_last_session_id: None,
             },
             pid,
         ))
@@ -1184,6 +1190,16 @@ impl TerminalApp {
                         self.status_text = runtime.ai_status_line.clone();
                     }
                 }
+                AiRunEvent::CodexSessionUpdated { tab_id, session_id } => {
+                    if let Some(runtime) = self.tab_runtimes.get_mut(&tab_id) {
+                        let changed = runtime.codex_last_session_id.as_deref() != Some(&session_id);
+                        runtime.codex_last_session_id = Some(session_id.clone());
+                        if changed {
+                            runtime.ai_status_line = format!("Codex session linked: {session_id}");
+                            self.status_text = runtime.ai_status_line.clone();
+                        }
+                    }
+                }
             }
         }
     }
@@ -1401,7 +1417,7 @@ impl TerminalApp {
 
     fn start_ai_request(&mut self, tool: AiTool, prompt: String) {
         let tab_id = self.tabs.active_id();
-        let (resolved, combined_prompt, ai_block_id, timeout_sec) = {
+        let (resolved, combined_prompt, ai_block_id, timeout_sec, codex_resume_session_id) = {
             let Some(runtime) = self.tab_runtimes.get_mut(&tab_id) else {
                 self.status_text = "active tab runtime is unavailable".to_owned();
                 return;
@@ -1433,6 +1449,7 @@ impl TerminalApp {
                 combined_prompt,
                 ai_block_id,
                 self.config.ai.timeout_sec.max(1),
+                runtime.codex_last_session_id.clone(),
             )
         };
 
@@ -1448,6 +1465,7 @@ impl TerminalApp {
                     ai_block_id,
                     timeout_sec,
                     workspace_root,
+                    codex_resume_session_id,
                     tx,
                 );
             });
@@ -3268,6 +3286,50 @@ fn ensure_claude_tab_scoped_session_args(
     updated
 }
 
+fn ensure_codex_tab_scoped_resume_args(
+    program: &str,
+    args: &[String],
+    tab_scoped_session_id: Option<&str>,
+) -> Vec<String> {
+    if !program.to_ascii_lowercase().contains("codex") {
+        return args.to_vec();
+    }
+
+    let Some(session_id) = tab_scoped_session_id else {
+        return args.to_vec();
+    };
+
+    let mut updated = args.to_vec();
+    if updated.is_empty() {
+        return updated;
+    }
+
+    let command = updated[0].to_ascii_lowercase();
+    if command != "exec" && command != "e" {
+        return updated;
+    }
+
+    if updated.len() >= 2 {
+        let second = updated[1].to_ascii_lowercase();
+        if second == "resume" {
+            if updated.len() >= 3 {
+                let target = updated[2].to_ascii_lowercase();
+                if target != "--last" && target != "--all" {
+                    return updated;
+                }
+                updated[2] = session_id.to_owned();
+                return updated;
+            }
+            updated.insert(2, session_id.to_owned());
+            return updated;
+        }
+    }
+
+    updated.insert(1, "resume".to_owned());
+    updated.insert(2, session_id.to_owned());
+    updated
+}
+
 fn build_tab_scoped_claude_session_id(tab_id: u64, workspace_root: &Path) -> String {
     let workspace = workspace_root.to_string_lossy();
     let mut seed = String::with_capacity(workspace.len() + 24);
@@ -3306,6 +3368,7 @@ fn run_ai_command(
     ai_block_id: u64,
     timeout_sec: u64,
     workspace_root: PathBuf,
+    codex_resume_session_id: Option<String>,
     tx: Sender<AiRunEvent>,
 ) {
     let started = Instant::now();
@@ -3326,6 +3389,11 @@ fn run_ai_command(
         prepare_ai_prompt_transport(&program, &args, prompt.as_deref());
     let prepared_args =
         ensure_claude_tab_scoped_session_args(&program, &prepared_args, tab_id, &workspace_root);
+    let prepared_args = ensure_codex_tab_scoped_resume_args(
+        &program,
+        &prepared_args,
+        codex_resume_session_id.as_deref(),
+    );
     let attempts = build_ai_launch_attempts(&program, &prepared_args);
     let mut launched_program = program.clone();
     let mut launch_errors = Vec::new();
@@ -3560,6 +3628,10 @@ fn spawn_stream_reader<R: Read + Send + 'static>(
                 continue;
             }
 
+            if let Some(session_id) = extract_codex_session_id(&program, &text) {
+                let _ = tx.send(AiRunEvent::CodexSessionUpdated { tab_id, session_id });
+            }
+
             if is_stderr && !should_emit_ai_stderr_line(&program, &text) {
                 continue;
             }
@@ -3584,6 +3656,28 @@ fn spawn_stream_reader<R: Read + Send + 'static>(
     })
 }
 
+fn extract_codex_session_id(program: &str, text: &str) -> Option<String> {
+    if !program.to_ascii_lowercase().contains("codex") {
+        return None;
+    }
+
+    let lower = text.to_ascii_lowercase();
+    let marker = "session id:";
+    let idx = lower.find(marker)?;
+    let value = text[idx + marker.len()..].trim();
+    if value.is_empty() {
+        return None;
+    }
+    let token = value
+        .split_whitespace()
+        .next()?
+        .trim_matches(|c: char| c == '.' || c == ',' || c == ')' || c == ']');
+    if token.is_empty() {
+        return None;
+    }
+    Some(token.to_owned())
+}
+
 fn should_emit_ai_stderr_line(program: &str, text: &str) -> bool {
     let lower_program = program.to_ascii_lowercase();
     if !lower_program.contains("codex") {
@@ -3591,6 +3685,9 @@ fn should_emit_ai_stderr_line(program: &str, text: &str) -> bool {
     }
 
     let lower = text.to_ascii_lowercase();
+    if lower.contains("codex_core::rollout::list: state db missing rollout path for thread") {
+        return false;
+    }
     let error_like = [
         "error",
         "failed",
@@ -4015,10 +4112,10 @@ mod tests {
         SavedTabSnapshot, SessionState, WorkspaceSnapshot, ai_install_hint,
         build_ai_block_copy_text, build_ai_launch_attempts, build_command_block_copy_text,
         build_editor_open_command, build_tab_scoped_claude_session_id,
-        ensure_claude_tab_scoped_session_args, load_workspace_snapshot_from_disk,
-        parse_first_file_line_ref, prepare_ai_prompt_transport, sanitize_pending_shell_line,
-        sanitize_shell_output_lines, save_workspace_snapshot_to_disk, should_emit_ai_stderr_line,
-        should_hide_pending_line,
+        ensure_claude_tab_scoped_session_args, ensure_codex_tab_scoped_resume_args,
+        extract_codex_session_id, load_workspace_snapshot_from_disk, parse_first_file_line_ref,
+        prepare_ai_prompt_transport, sanitize_pending_shell_line, sanitize_shell_output_lines,
+        save_workspace_snapshot_to_disk, should_emit_ai_stderr_line, should_hide_pending_line,
     };
     use std::fs;
     use std::path::PathBuf;
@@ -4240,6 +4337,53 @@ mod tests {
     }
 
     #[test]
+    fn codex_args_get_tab_scoped_resume_session_id() {
+        let args = vec!["exec".to_owned(), "-".to_owned()];
+        let updated = ensure_codex_tab_scoped_resume_args("codex", &args, Some("sess_abc"));
+        assert_eq!(
+            updated,
+            vec![
+                "exec".to_owned(),
+                "resume".to_owned(),
+                "sess_abc".to_owned(),
+                "-".to_owned()
+            ]
+        );
+    }
+
+    #[test]
+    fn codex_explicit_resume_target_is_not_overridden() {
+        let args = vec![
+            "exec".to_owned(),
+            "resume".to_owned(),
+            "sess_user".to_owned(),
+            "-".to_owned(),
+        ];
+        let updated = ensure_codex_tab_scoped_resume_args("codex", &args, Some("sess_auto"));
+        assert_eq!(updated, args);
+    }
+
+    #[test]
+    fn codex_resume_last_is_replaced_with_tab_session() {
+        let args = vec![
+            "exec".to_owned(),
+            "resume".to_owned(),
+            "--last".to_owned(),
+            "-".to_owned(),
+        ];
+        let updated = ensure_codex_tab_scoped_resume_args("codex", &args, Some("sess_tab"));
+        assert_eq!(
+            updated,
+            vec![
+                "exec".to_owned(),
+                "resume".to_owned(),
+                "sess_tab".to_owned(),
+                "-".to_owned()
+            ]
+        );
+    }
+
+    #[test]
     fn claude_args_get_tab_scoped_session_id() {
         let args = vec!["--continue".to_owned(), "--print".to_owned()];
         let workspace = PathBuf::from("D:\\TabbyTerm");
@@ -4279,6 +4423,22 @@ mod tests {
     fn codex_info_stderr_is_filtered() {
         assert!(!should_emit_ai_stderr_line("codex", "OpenAI Codex v0.98.0"));
         assert!(!should_emit_ai_stderr_line("codex", "session id: abc"));
+        assert!(!should_emit_ai_stderr_line(
+            "codex",
+            "[stderr] 2026-02-08T14:15:39.084453Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c3d9b-6c35-7532-87c7-2394918ab673"
+        ));
+    }
+
+    #[test]
+    fn codex_session_id_can_be_extracted_from_stderr() {
+        assert_eq!(
+            extract_codex_session_id("codex", "Session ID: sess_1234"),
+            Some("sess_1234".to_owned())
+        );
+        assert_eq!(
+            extract_codex_session_id("claude", "Session ID: sess_1234"),
+            None
+        );
     }
 
     #[test]
