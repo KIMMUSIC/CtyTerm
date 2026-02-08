@@ -1,4 +1,4 @@
-# MyTerminal-c (TabbyTerm Workspace)
+# TabbyTerm
 
 Windows 전용 Rust/egui/wgpu 기반 터미널입니다.  
 현재 버전은 블록 기반 출력, 탭/Pane, AI 패널, 커스텀 상단바, 애니메이션 마스코트를 포함합니다.

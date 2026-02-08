@@ -460,7 +460,7 @@ pub fn run() -> Result<()> {
     };
 
     eframe::run_native(
-        "MyTerminal-c",
+        "TabbyTerm",
         native_options,
         Box::new(|_cc| {
             let app = TerminalApp::new()?;
@@ -4157,7 +4157,7 @@ mod tests {
     #[test]
     fn claude_args_get_tab_scoped_session_id() {
         let args = vec!["--continue".to_owned(), "--print".to_owned()];
-        let workspace = PathBuf::from("D:\\MyTerminal-c");
+        let workspace = PathBuf::from("D:\\TabbyTerm");
         let updated = ensure_claude_tab_scoped_session_args("claude", &args, 42, &workspace);
         assert_eq!(updated[0], "--session-id");
         assert_eq!(updated[2], "--continue");
@@ -4175,14 +4175,14 @@ mod tests {
     #[test]
     fn claude_explicit_resume_is_not_overridden() {
         let args = vec!["--resume".to_owned(), "--print".to_owned()];
-        let workspace = PathBuf::from("D:\\MyTerminal-c");
+        let workspace = PathBuf::from("D:\\TabbyTerm");
         let updated = ensure_claude_tab_scoped_session_args("claude", &args, 3, &workspace);
         assert_eq!(updated, args);
     }
 
     #[test]
     fn tab_scoped_session_id_is_stable_and_unique_per_tab() {
-        let workspace = PathBuf::from("D:\\MyTerminal-c");
+        let workspace = PathBuf::from("D:\\TabbyTerm");
         let a = build_tab_scoped_claude_session_id(1, &workspace);
         let b = build_tab_scoped_claude_session_id(1, &workspace);
         let c = build_tab_scoped_claude_session_id(2, &workspace);
