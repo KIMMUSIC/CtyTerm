@@ -1,0 +1,26 @@
+[workspace]
+members = [
+    "crates/app",
+    "crates/terminal_core",
+    "crates/ux_model",
+    "crates/render",
+    "crates/ui",
+]
+resolver = "2"
+
+[workspace.package]
+edition = "2024"
+version = "0.1.0"
+license = "MIT"
+authors = ["MyTerminal-c"]
+
+[workspace.dependencies]
+anyhow = "1.0"
+crossbeam-channel = "0.5"
+eframe = { version = "0.31", features = ["wgpu"] }
+egui = "0.31"
+image = "0.25"
+portable-pty = "0.9"
+serde = { version = "1.0", features = ["derive"] }
+thiserror = "2.0"
+toml = "0.8"

@@ -1,0 +1,21 @@
+[ai]
+timeout_sec = 300
+claude_continue = true
+
+[ai.codex]
+program = "codex"
+args = [
+    "exec",
+    "{prompt}",
+]
+
+[ai.claude]
+program = "claude"
+args = [
+    "--print",
+    "{prompt}",
+]
+
+[session]
+autosave_interval_sec = 3
+session_file = "state/session.toml"

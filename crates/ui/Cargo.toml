@@ -1,0 +1,16 @@
+[package]
+name = "ui"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow.workspace = true
+crossbeam-channel.workspace = true
+eframe.workspace = true
+egui.workspace = true
+image.workspace = true
+render = { path = "../render" }
+serde.workspace = true
+terminal_core = { path = "../terminal_core" }
+toml.workspace = true
+ux_model = { path = "../ux_model" }

@@ -1,0 +1,13 @@
+# Rust
+target/
+
+# IDE
+.idea/
+
+# Local runtime/output artifacts
+state/
+exports/
+
+# OS junk
+.DS_Store
+Thumbs.db
