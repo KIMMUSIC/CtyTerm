@@ -8,6 +8,11 @@ target/
 state/
 exports/
 
+# Local planning docs (keep README.md tracked)
+PLAN.md
+TASKS*.md
+docs/*.md
+
 # OS junk
 .DS_Store
 Thumbs.db
