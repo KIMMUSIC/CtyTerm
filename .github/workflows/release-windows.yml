@@ -1,0 +1,56 @@
+name: release-windows
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build release binary
+        run: cargo build --locked --release -p app
+
+      - name: Package release zip
+        shell: pwsh
+        run: |
+          $tag = "${{ github.ref_name }}"
+          $packageDir = "dist/TabbyTerm-$tag-windows-x64"
+          New-Item -ItemType Directory -Force -Path $packageDir | Out-Null
+
+          Copy-Item "target/release/app.exe" "$packageDir/TabbyTerm.exe" -Force
+
+          if (Test-Path "assets") {
+            Copy-Item "assets" "$packageDir/assets" -Recurse -Force
+          }
+          if (Test-Path "config") {
+            Copy-Item "config" "$packageDir/config" -Recurse -Force
+          }
+
+          Compress-Archive -Path "$packageDir/*" -DestinationPath "TabbyTerm-$tag-windows-x64.zip" -Force
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: tabbyterm-windows-x64
+          path: TabbyTerm-*-windows-x64.zip
+
+      - name: Publish GitHub Release asset
+        uses: softprops/action-gh-release@v2
+        with:
+          files: TabbyTerm-*-windows-x64.zip
+          generate_release_notes: true
